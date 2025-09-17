@@ -1,18 +1,4 @@
 #!/usr/bin/env python3
-"""
-local_connect_proxy_browser.py
-
-- A minimal threaded HTTP(S) proxy supporting CONNECT (HTTPS tunneling).
-- A PyQt5 GUI that asks for a URL and opens it in an embedded Chromium (QWebEngineView)
-  which is forced to use the local proxy.
-
-Requirements:
-    pip install PyQt5 PyQtWebEngine
-
-Usage:
-    python local_connect_proxy_browser.py
-"""
-
 import os
 import sys
 import socket
@@ -22,21 +8,12 @@ import urllib.parse
 import traceback
 from typing import Tuple
 
-# ---- CONFIG ----
 PROXY_HOST = "127.0.0.1"
-PROXY_PORT = 8888  # port for the local proxy
+PROXY_PORT = 8888
 LISTEN_BACKLOG = 100
 BUFFER_SIZE = 8192
-# ----------------
-
-# Make Chromium used by QtWebEngine use our proxy.
-# MUST set before importing anything from PyQt5.QtWebEngineWidgets
 os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", f"--proxy-server={PROXY_HOST}:{PROXY_PORT}")
 
-
-# --------------------
-# Minimal proxy server
-# --------------------
 def debug(msg: str):
     print("[proxy]", msg)
 
@@ -70,7 +47,6 @@ def parse_request_line_and_headers(header_bytes: bytes) -> Tuple[str, list]:
     try:
         s = header_bytes.decode("iso-8859-1", errors="ignore")
         parts = s.split("\r\n")
-        # first line is request line
         return parts[0], parts[1:]
     except Exception:
         return "", []
@@ -99,8 +75,6 @@ def tunnel_sockets(a: socket.socket, b: socket.socket):
         while True:
             r, _, _ = select.select(sockets, [], [], 10)
             if not r:
-                # timeout: check if either closed
-                # we continue until sockets close / error
                 continue
             for s in r:
                 other = b if s is a else a
@@ -143,7 +117,6 @@ def handle_connect(client_conn: socket.socket, target_hostport: str):
         client_conn.close()
         return
 
-    # Tell client the tunnel is established
     try:
         client_conn.sendall(b"HTTP/1.1 200 Connection established\r\n\r\n")
     except Exception:
@@ -151,7 +124,6 @@ def handle_connect(client_conn: socket.socket, target_hostport: str):
         client_conn.close()
         return
 
-    # Now shuttle bytes both directions until closed
     tunnel_sockets(client_conn, remote)
 
 
@@ -178,8 +150,7 @@ def extract_host_port_from_headers(headers_list: list, first_request_line: str) 
             else:
                 host = host_val
             break
-
-    # if host not found in headers, maybe absolute-URI in request-line
+          
     if not host:
         parts = first_request_line.split()
         if len(parts) >= 2:
@@ -227,7 +198,6 @@ def handle_http_request(client_conn: socket.socket, initial_header_bytes: bytes)
             return
         debug(f"Forwarding HTTP to {host}:{port} (first-line: {request_line})")
 
-        # Connect remote
         try:
             remote = socket.create_connection((host, port), timeout=10)
         except Exception as e:
@@ -236,26 +206,18 @@ def handle_http_request(client_conn: socket.socket, initial_header_bytes: bytes)
             client_conn.close()
             return
 
-        # Rewrite request-line if it contains absolute-URI
         new_first_line = rewrite_request_first_line_to_origin(request_line)
-        # Build new header bytes: first line + rest headers up to \r\n\r\n
-        # initial_header_bytes already contains full header block including request-line.
-        # Replace the first line only.
         try:
             s = initial_header_bytes.decode("iso-8859-1", errors="ignore")
-            # drop old first line
-            rest = "\r\n".join(s.split("\r\n")[1:])  # includes the final \r\n\r\n (maybe)
-            # Ensure we preserve the trailing \r\n\r\n
+            rest = "\r\n".join(s.split("\r\n")[1:])
             if not rest.endswith("\r\n\r\n"):
                 rest = rest + "\r\n\r\n"
             new_header_block = (new_first_line + "\r\n" + rest).encode("iso-8859-1")
         except Exception:
             new_header_block = initial_header_bytes
 
-        # Send request to remote
         remote.sendall(new_header_block)
 
-        # Now relay response back to client until closed
         while True:
             data = remote.recv(BUFFER_SIZE)
             if not data:
@@ -288,9 +250,7 @@ def handle_client(client_conn: socket.socket, client_addr):
         if not request_line:
             client_conn.close()
             return
-        # check if CONNECT
         if request_line.upper().startswith("CONNECT "):
-            # "CONNECT host:port HTTP/1.1"
             parts = request_line.split()
             if len(parts) >= 2:
                 hostport = parts[1]
@@ -299,7 +259,6 @@ def handle_client(client_conn: socket.socket, client_addr):
                 client_conn.sendall(b"HTTP/1.1 400 Bad Request\r\n\r\n")
                 client_conn.close()
         else:
-            # Normal HTTP request (GET/POST through proxy form)
             handle_http_request(client_conn, header_bytes)
     except Exception:
         debug("Exception in handle_client:\n" + traceback.format_exc())
@@ -327,13 +286,8 @@ def start_proxy(listener_host=PROXY_HOST, listener_port=PROXY_PORT):
         debug("Proxy shutting down")
     finally:
         s.close()
-
-
-# --------------------
-# PyQt GUI / Browser
-# --------------------
+      
 def run_gui_and_browser():
-    # Import PyQt after we set QTWEBENGINE_CHROMIUM_FLAGS earlier
     from PyQt5 import QtWidgets
     from PyQt5.QtCore import QUrl
     from PyQt5.QtWidgets import QInputDialog, QMessageBox
@@ -341,18 +295,15 @@ def run_gui_and_browser():
 
     app = QtWidgets.QApplication(sys.argv)
 
-    # Ask user for URL
     url_text, ok = QInputDialog.getText(None, "Open URL", "Enter URL (include http(s)://):", text="https://www.example.com")
     if not ok or not url_text.strip():
         QMessageBox.information(None, "Cancelled", "No URL entered. Exiting.")
         return
 
-    # Normalize URL
     url_text = url_text.strip()
     if "://" not in url_text:
         url_text = "http://" + url_text
 
-    # Browser window
     window = QtWidgets.QMainWindow()
     window.setWindowTitle(f"Proxy Browser - {url_text}")
     window.resize(1200, 800)
@@ -363,22 +314,15 @@ def run_gui_and_browser():
     window.setCentralWidget(view)
     window.show()
 
-    # Optionally show a small notice about the proxy
     QMessageBox.information(None, "Proxy Active", f"Local proxy running on {PROXY_HOST}:{PROXY_PORT}\n"
                                                  "The embedded browser is configured to use that proxy.")
 
     app.exec_()
 
-
-# --------------------
-# Main
-# --------------------
 if __name__ == "__main__":
-    # Start proxy in background thread
     server_thread = threading.Thread(target=start_proxy, args=(PROXY_HOST, PROXY_PORT), daemon=True)
     server_thread.start()
 
-    # Run GUI (on main thread)
     try:
         run_gui_and_browser()
     except Exception as e:
@@ -386,7 +330,6 @@ if __name__ == "__main__":
         traceback.print_exc()
         print("Proxy is still running in background (press Ctrl+C to exit).")
     finally:
-        # When GUI closes, exit process (proxy threads are daemon so they stop)
         try:
             os._exit(0)
         except Exception:
